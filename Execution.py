@@ -9,7 +9,7 @@ from arcpy.sa import ExtractByMask
 from collections import defaultdict
 from numpy.random import permutation
 from os.path import join as path_join
-from numpy import argsort, isnan, unravel_index, zeros_like, nan, nansum, nanmin, nanmax, where
+from numpy import argsort, isnan, unravel_index, zeros_like, nan, nansum, nanmin, nanmax
 
 # set environment
 arcpy.CheckOutExtension("Spatial")
@@ -67,6 +67,7 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
     # group into MultiPolygons
     target_isos = set(targets['ISO_3'])
+    arcpy.AddMessage(target_isos)
     geoms_by_iso = defaultdict(list)
     with arcpy.da.SearchCursor(countries, ["ISO_3DIGIT", "SHAPE@"]) as cursor:
         for iso, geom in cursor:
@@ -83,20 +84,29 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
             merged = merged.union(g)
         multi_geoms[iso] = merged
 
+    if len(multi_geoms.items()) == 0:
+        arcpy.AddMessage("No valid geometries to process, exiting...")
+        exit()
+
     # loop through countries
     for _, row in targets.iterrows():
 
         # get data for this country
         iso3 = row['ISO_3']
         target = float(row['Target'])
-        geom = multi_geoms[iso3]
+        
+        try:
+            geom = multi_geoms[iso3]
+        except KeyError:
+            arcpy.AddMessage(f'WARNING: No geometry for {iso3}')
+            continue
 
         # Loop through countries
         # with arcpy.da.SearchCursor(countries, ["NAME", "ISO_3DIGIT", "SHAPE@"], 
         #                            where_clause=f"ISO_3DIGIT = '{row['ISO_3']}'") as cursor:
 
         # for name, iso, geom in cursor:
-        arcpy.AddMessage(f"Processing {iso3} (target: {target:,})...")
+        arcpy.AddMessage(f"\nProcessing {iso3} (target: {target:,})...")
 
         # Extract raster values using country geometry
         pvo_extract = ExtractByMask(pvo, geom)
