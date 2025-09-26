@@ -48,11 +48,11 @@ def select_indices(sorted_indices, values, target):
 
         # if we have exceeded the limit, finish
         if total + val > target:
-            break
-
-        # otherwise, add the value to the total and record the location
-        total += val
-        selected_indices.append(idx)
+            continue
+        else:
+            # otherwise, add the value to the total and record the location
+            total += val
+            selected_indices.append(idx)
     
     # return the indices of the selected cells
     return (selected_indices, total)
@@ -143,16 +143,19 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         # calculate PVO total
         pvo_total = nansum(pvo_np)
         pvo_min = nanmin(pvo_np)
+        if debug:
+            arcpy.AddMessage(f"PVO Total = {pvo_total}")
+            arcpy.AddMessage(f"PVO Min = {pvo_min}")
 
         # sense check the target
         if target > pvo_total:
             arcpy.AddMessage(f"\nWARNING: The specified limit ({target:,.2f}) is greater than the sum of cell values ({pvo_total:,.2f}).")
             arcpy.AddMessage(f"Nothing to do, skipping {iso3}...")
-            break
+            continue
         elif target < pvo_min:
             arcpy.AddMessage(f"\nWARNING: The specified limit ({target:,.2f}) is smaller than the smallest cell value ({pvo_min:,.2f}).")
             arcpy.AddMessage(f"Nothing to do, skipping {iso3}...")
-            break
+            continue
 
         arcpy.AddMessage(f"\n Scenario 1: Theoretical Maximum Potential...")
         arcpy.AddMessage(f"  {'Cell Count:':<32} {npp_flat[~isnan(npp_flat)].size:,.2f}")
