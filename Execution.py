@@ -61,13 +61,18 @@ def select_indices(sorted_indices, values, target):
 def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path, targets, debug=False):
     """ Evaluate each country in turn, outputting rasters as we go"""
     
+    # report info on the process
+    arcpy.AddMessage(f"\nConversion Factor: {km2_MW}")
+    arcpy.AddMessage(f"Density: {density}")
+
     # load rasters
     npp = arcpy.Raster(npp_path)
     pvo = arcpy.Raster(pvo_path)
 
     # group into MultiPolygons
     target_isos = set(targets['ISO_3'])
-    arcpy.AddMessage(target_isos)
+    if debug:
+        arcpy.AddMessage(target_isos)
     geoms_by_iso = defaultdict(list)
     with arcpy.da.SearchCursor(countries, ["ISO_3DIGIT", "SHAPE@"]) as cursor:
         for iso, geom in cursor:
@@ -150,11 +155,12 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
             break
 
         arcpy.AddMessage(f"\n Scenario 1: Theoretical Maximum Potential...")
+        arcpy.AddMessage(f"  {'Cell Count:':<32} {npp_flat[~isnan(npp_flat)].size:,.2f}")
         arcpy.AddMessage(f"  {'PVO Sum:':<32} {pvo_total:,.2f}")
         arcpy.AddMessage(f"  {'NPP Sum:':<32} {nansum(npp_np):,.2f}")
 
         # write result to raster, load into workspace
-        output_raster(path_join(output_raster_path, f"{iso}_scenario1.tif"), 
+        output_raster(path_join(output_raster_path, f"{iso3}_scenario1.tif"), 
                     pvo_np, lower_left, cell_width, cell_height, spatial_ref)
 
 
@@ -181,7 +187,7 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {nansum(npp_np[rows, cols]):,.2f}")
 
         # write result to raster, load into workspace
-        output_raster(path_join(output_raster_path, f"{iso}_scenario2.tif"), 
+        output_raster(path_join(output_raster_path, f"{iso3}_scenario2.tif"), 
                     output, lower_left, cell_width, cell_height, spatial_ref)
 
         
@@ -208,7 +214,7 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {nansum(npp_np[rows, cols]):,.2f}")
 
         # write result to raster, load into workspace
-        output_raster(path_join(output_raster_path, f"{iso}_scenario3.tif"), 
+        output_raster(path_join(output_raster_path, f"{iso3}_scenario3.tif"), 
                     output, lower_left, cell_width, cell_height, spatial_ref)
 
 
@@ -235,7 +241,7 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {nansum(npp_np[rows, cols]):,.2f}")
 
         # write result to raster, load into workspace
-        output_raster(path_join(output_raster_path, f"{iso}_scenario4.tif"), 
+        output_raster(path_join(output_raster_path, f"{iso3}_scenario4.tif"), 
                     output, lower_left, cell_width, cell_height, spatial_ref)
 
         
@@ -262,7 +268,7 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {nansum(npp_np[rows, cols]):,.2f}")
 
         # write result to raster, load into workspace
-        output_raster(path_join(output_raster_path, f"{iso}_scenario5.tif"), 
+        output_raster(path_join(output_raster_path, f"{iso3}_scenario5.tif"), 
                     output, lower_left, cell_width, cell_height, spatial_ref)
 
     return
