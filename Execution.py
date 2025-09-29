@@ -168,7 +168,7 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         ''' SCENARIO 1 '''
 
-        arcpy.AddMessage(f"\n Scenario 1: Total Available Resorce...")
+        arcpy.AddMessage(f"\n Scenario 1: Total Available Resource...")
 
         # calculate PVO total
         pvo_total = nansum(pvo_np)
