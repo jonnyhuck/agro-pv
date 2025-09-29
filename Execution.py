@@ -182,10 +182,16 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         if target > pvo_total:
             arcpy.AddMessage(f"\nWARNING: The specified limit ({target:,.2f}) is greater than the sum of cell values ({pvo_total:,.2f}).")
             arcpy.AddMessage(f"Nothing to do, skipping {iso3}...")
+            for n in range(1, 6):
+                output_csv_data[f'S{n}_PVO'].append(nan)
+                output_csv_data[f'S{n}_NPP_Loss'].append(nan)
             continue
         elif target < pvo_min:
             arcpy.AddMessage(f"\nWARNING: The specified limit ({target:,.2f}) is smaller than the smallest cell value ({pvo_min:,.2f}).")
             arcpy.AddMessage(f"Nothing to do, skipping {iso3}...")
+            for n in range(1, 6):
+                output_csv_data[f'S{n}_PVO'].append(nan)
+                output_csv_data[f'S{n}_NPP_Loss'].append(nan)
             continue
 
         # update outputs 
