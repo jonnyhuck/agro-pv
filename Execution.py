@@ -127,7 +127,7 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         try:
             geom = multi_geoms[iso3]
         except KeyError:
-            arcpy.AddMessage(f'WARNING: No geometry for {iso3}')
+            arcpy.AddMessage(f'\nWARNING: No geometry for {iso3}')
             continue
 
         # load into CSV
@@ -321,9 +321,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
                     output, lower_left, cell_width, cell_height, spatial_ref)
 
     # output CSV File
-    for col in output_csv_data.values(): 
-        arcpy.AddMessage(len(col))    
-    arcpy.AddMessage(output_csv_data)
     DataFrame(output_csv_data).to_csv(output_csv_path)
 
     return
