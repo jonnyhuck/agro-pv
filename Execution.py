@@ -68,13 +68,13 @@ def select_indices(sorted_indices, values, target):
         if isnan(val):
             continue
 
-        # if we have exceeded the limit, finish
+        # if we have exceeded the limit, skip
         if total + val > target:
             continue
-        else:
-            # otherwise, add the value to the total and record the location
-            total += val
-            selected_indices.append(idx)
+        
+        # otherwise, add the value to the total and record the location
+        total += val
+        selected_indices.append(idx)
     
     # return the indices of the selected cells
     return (selected_indices, total)
@@ -102,7 +102,7 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
     if verbose:
         arcpy.AddMessage(target_isos)
     geoms_by_iso = defaultdict(list)
-    with arcpy.da.SearchCursor(countries, ["ISO_3DIGIT", "SHAPE@"]) as cursor:
+    with arcpy.da.SearchCursor(countries, ["ISO_A3", "SHAPE@"]) as cursor:
         for iso, geom in cursor:
             if (geom) and (iso in target_isos):
                 geoms_by_iso[iso].append(geom)
@@ -168,8 +168,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         ''' SCENARIO 1 '''
 
-        arcpy.AddMessage(f"\n Scenario 1: Total Available Resource...")
-
         # calculate PVO total
         pvo_total = nansum(pvo_np)
         pvo_min = nanmin(pvo_np)
@@ -211,9 +209,8 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
                 output_csv_data[f'S{n}_NPP_Loss'].append(nan)
             continue
 
-        ''' SCENARIO 2 '''
 
-        arcpy.AddMessage(f"\n Scenario 2: Prioritise Energy Production...")
+        ''' SCENARIO 2 '''
 
         # flatten and sort array and select top N cells
         selected_indices, total = select_indices(argsort(pvo_flat)[::-1], pvo_flat, target)
@@ -226,11 +223,12 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         # update outputs
         npp_loss = nansum(npp_np[rows, cols])
-        output_csv_data['S2_PVO'].append(total) # output.sum()
-        output_csv_data['S2_NPP_Loss'].append(npp_loss * 0.1)
+        output_csv_data['S2_PVO'].append(total)
+        output_csv_data['S2_NPP_Loss'].append(npp_loss * 0.01)
 
         # report results
         if verbose:
+            arcpy.AddMessage(f"\n Scenario 2: Prioritise Energy Production...")
             arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
             arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {total:,.2f}")
             arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
@@ -243,8 +241,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         
         ''' SCENARIO 3 '''
 
-        arcpy.AddMessage(f"\n Scenario 3: Prioritise Agricultural Production...")
-
         # flatten and sort array and select top N cells
         selected_indices, total = select_indices(argsort(npp_flat), pvo_flat, target)
 
@@ -256,11 +252,12 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         # update outputs
         npp_loss = nansum(npp_np[rows, cols])
-        output_csv_data['S3_PVO'].append(total) # output.sum()
-        output_csv_data['S3_NPP_Loss'].append(npp_loss * 0.1)
+        output_csv_data['S3_PVO'].append(total)
+        output_csv_data['S3_NPP_Loss'].append(npp_loss * 0.01)
         
         # report results
         if verbose:
+            arcpy.AddMessage(f"\n Scenario 3: Prioritise Agricultural Production...")
             arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
             arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {total:,.2f}")
             arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
@@ -273,8 +270,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         ''' SCENARIO 4 '''
 
-        arcpy.AddMessage(f"\n Scenario 4: Balance Energy and Agricultural Production...")
-
         # flatten and sort array and select top N cells
         selected_indices, total = select_indices(argsort(both_flat)[::-1], pvo_flat, target)
 
@@ -286,11 +281,12 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         
         # update outputs
         npp_loss = nansum(npp_np[rows, cols])
-        output_csv_data['S4_PVO'].append(total) # output.sum()
-        output_csv_data['S4_NPP_Loss'].append(npp_loss * 0.1)
+        output_csv_data['S4_PVO'].append(total)
+        output_csv_data['S4_NPP_Loss'].append(npp_loss * 0.01)
 
         # report results
         if verbose:
+            arcpy.AddMessage(f"\n Scenario 4: Balance Energy and Agricultural Production...")
             arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
             arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
             arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
@@ -303,8 +299,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         
         ''' SCENARIO 5 '''
 
-        arcpy.AddMessage(f"\n Scenario 5: Randomised Locations...")
-
         # flatten and sort array and select top N cells
         selected_indices, total = select_indices(permutation(len(pvo_flat)), pvo_flat, target)
 
@@ -316,11 +310,12 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         
         # update outputs
         npp_loss = nansum(npp_np[rows, cols])
-        output_csv_data['S5_PVO'].append(total) # output.sum()
-        output_csv_data['S5_NPP_Loss'].append(npp_loss * 0.1)
+        output_csv_data['S5_PVO'].append(total)
+        output_csv_data['S5_NPP_Loss'].append(npp_loss * 0.01)
 
         # report results
         if verbose:
+            arcpy.AddMessage(f"\n Scenario 5: Randomised Locations...")
             arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
             arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
             arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
