@@ -4,15 +4,37 @@ Tool to evaluate PV potential by country
 @author jonnyhuck
 """
 import arcpy
-from pandas import read_csv
+from os import path
 from arcpy.sa import ExtractByMask
 from collections import defaultdict
 from numpy.random import permutation
 from os.path import join as path_join
+from pandas import read_csv, DataFrame
 from numpy import argsort, isnan, unravel_index, zeros_like, nan, nansum, nanmin, nanmax
 
 # set environment
 arcpy.CheckOutExtension("Spatial")
+
+
+def validate_csv_path(filepath):
+    """
+    Ensure filepath is a valid .csv file in an existing directory.
+    - If extension is not .csv, change it to .csv.
+    - If directory does not exist, raise FileNotFoundError.
+    """
+    
+    # Ensure it has .csv extension
+    root, ext = path.splitext(filepath)
+    if ext.lower() != ".csv":
+        filepath = root + ".csv"
+    
+    # Ensure directory exists
+    directory = path.dirname(filepath)
+    arcpy.AddMessage(directory)
+    if not path.isdir(directory):
+        raise FileNotFoundError(f"Directory does not exist: {directory}")
+    
+    return filepath
 
 
 def output_raster(output_raster_path, output, lower_left, cell_width, cell_height, 
@@ -58,8 +80,14 @@ def select_indices(sorted_indices, values, target):
     return (selected_indices, total)
 
 
-def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path, targets, debug=False):
+def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path, 
+             targets, output_csv_path, verbose=False):
     """ Evaluate each country in turn, outputting rasters as we go"""
+
+    arcpy.AddMessage(f"\nPreparing Datasets...")
+
+    # init output CSV data dictionary
+    output_csv_data = defaultdict(list)
     
     # report info on the process
     arcpy.AddMessage(f"\nConversion Factor: {km2_MW}")
@@ -71,7 +99,7 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
     # group into MultiPolygons
     target_isos = set(targets['ISO_3'])
-    if debug:
+    if verbose:
         arcpy.AddMessage(target_isos)
     geoms_by_iso = defaultdict(list)
     with arcpy.da.SearchCursor(countries, ["ISO_3DIGIT", "SHAPE@"]) as cursor:
@@ -99,16 +127,16 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         # get data for this country
         iso3 = row['ISO_3']
         target = float(row['Target'])
+
+        # load into CSV
+        output_csv_data['ISO3'].append(iso3)
+        output_csv_data['Target'].append(target)
         
         try:
             geom = multi_geoms[iso3]
         except KeyError:
             arcpy.AddMessage(f'WARNING: No geometry for {iso3}')
             continue
-
-        # Loop through countries
-        # with arcpy.da.SearchCursor(countries, ["NAME", "ISO_3DIGIT", "SHAPE@"], 
-        #                            where_clause=f"ISO_3DIGIT = '{row['ISO_3']}'") as cursor:
 
         # for name, iso, geom in cursor:
         arcpy.AddMessage(f"\nProcessing {iso3} (target: {target:,})...")
@@ -140,10 +168,13 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         ''' SCENARIO 1 '''
 
+        arcpy.AddMessage(f"\n Scenario 1: Total Available Resorce...")
+
         # calculate PVO total
         pvo_total = nansum(pvo_np)
         pvo_min = nanmin(pvo_np)
-        if debug:
+        output_csv_data
+        if verbose:
             arcpy.AddMessage(f"PVO Total = {pvo_total}")
             arcpy.AddMessage(f"PVO Min = {pvo_min}")
 
@@ -157,10 +188,17 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
             arcpy.AddMessage(f"Nothing to do, skipping {iso3}...")
             continue
 
-        arcpy.AddMessage(f"\n Scenario 1: Theoretical Maximum Potential...")
-        arcpy.AddMessage(f"  {'Cell Count:':<32} {npp_flat[~isnan(npp_flat)].size:,.2f}")
-        arcpy.AddMessage(f"  {'PVO Sum:':<32} {pvo_total:,.2f}")
-        arcpy.AddMessage(f"  {'NPP Sum:':<32} {nansum(npp_np):,.2f}")
+        # update outputs 
+        npp_loss = nansum(npp_np)
+        output_csv_data['S1_PVO'].append(pvo_total)
+        output_csv_data['S1_NPP_Loss'].append(npp_loss * 0.1)
+
+        # report results
+        if verbose:
+            arcpy.AddMessage(f"\n Scenario 1: Theoretical Maximum Potential...")
+            arcpy.AddMessage(f"  {'Cell Count:':<32} {npp_flat[~isnan(npp_flat)].size:,.2f}")
+            arcpy.AddMessage(f"  {'PVO Sum:':<32} {pvo_total:,.2f}")
+            arcpy.AddMessage(f"  {'NPP Sum:':<32} {npp_loss:,.2f}")
 
         # write result to raster, load into workspace
         output_raster(path_join(output_raster_path, f"{iso3}_scenario1.tif"), 
@@ -173,9 +211,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         # flatten and sort array and select top N cells
         selected_indices, total = select_indices(argsort(pvo_flat)[::-1], pvo_flat, target)
-        if debug:
-            arcpy.AddMessage(pvo_flat[selected_indices])
-            arcpy.AddMessage(npp_flat[selected_indices])
 
         # convert back to 2D indices and construct output surface
         rows, cols = unravel_index(selected_indices, pvo_np.shape)
@@ -183,11 +218,17 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         for r, c in zip(rows, cols):
             output[r, c] = pvo_np[r, c]
 
+        # update outputs
+        npp_loss = nansum(npp_np[rows, cols])
+        output_csv_data['S2_PVO'].append(total) # output.sum()
+        output_csv_data['S2_NPP_Loss'].append(npp_loss * 0.1)
+
         # report results
-        arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
-        arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
-        arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
-        arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {nansum(npp_np[rows, cols]):,.2f}")
+        if verbose:
+            arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
+            arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {total:,.2f}")
+            arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
+            arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {npp_loss:,.2f}")
 
         # write result to raster, load into workspace
         output_raster(path_join(output_raster_path, f"{iso3}_scenario2.tif"), 
@@ -200,21 +241,24 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         # flatten and sort array and select top N cells
         selected_indices, total = select_indices(argsort(npp_flat), pvo_flat, target)
-        if debug:
-            arcpy.AddMessage(pvo_flat[selected_indices])
-            arcpy.AddMessage(npp_flat[selected_indices])
 
         # convert back to 2D indices and construct output surface
         rows, cols = unravel_index(selected_indices, pvo_np.shape)
         output = zeros_like(pvo_np)
         for r, c in zip(rows, cols):
             output[r, c] = pvo_np[r, c]
+
+        # update outputs
+        npp_loss = nansum(npp_np[rows, cols])
+        output_csv_data['S3_PVO'].append(total) # output.sum()
+        output_csv_data['S3_NPP_Loss'].append(npp_loss * 0.1)
         
         # report results
-        arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
-        arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
-        arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
-        arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {nansum(npp_np[rows, cols]):,.2f}")
+        if verbose:
+            arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
+            arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {total:,.2f}")
+            arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
+            arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {npp_loss:,.2f}")
 
         # write result to raster, load into workspace
         output_raster(path_join(output_raster_path, f"{iso3}_scenario3.tif"), 
@@ -227,9 +271,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         # flatten and sort array and select top N cells
         selected_indices, total = select_indices(argsort(both_flat)[::-1], pvo_flat, target)
-        if debug:
-            arcpy.AddMessage(pvo_flat[selected_indices])
-            arcpy.AddMessage(npp_flat[selected_indices])
 
         # convert back to 2D indices and construct output surface
         rows, cols = unravel_index(selected_indices, pvo_np.shape)
@@ -237,11 +278,17 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         for r, c in zip(rows, cols):
             output[r, c] = pvo_np[r, c]
         
+        # update outputs
+        npp_loss = nansum(npp_np[rows, cols])
+        output_csv_data['S4_PVO'].append(total) # output.sum()
+        output_csv_data['S4_NPP_Loss'].append(npp_loss * 0.1)
+
         # report results
-        arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
-        arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
-        arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
-        arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {nansum(npp_np[rows, cols]):,.2f}")
+        if verbose:
+            arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
+            arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
+            arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
+            arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {npp_loss:,.2f}")
 
         # write result to raster, load into workspace
         output_raster(path_join(output_raster_path, f"{iso3}_scenario4.tif"), 
@@ -254,9 +301,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
 
         # flatten and sort array and select top N cells
         selected_indices, total = select_indices(permutation(len(pvo_flat)), pvo_flat, target)
-        if debug:
-            arcpy.AddMessage(pvo_flat[selected_indices])
-            arcpy.AddMessage(npp_flat[selected_indices])
 
         # convert back to 2D indices and construct output surface
         rows, cols = unravel_index(selected_indices, pvo_np.shape)
@@ -264,15 +308,24 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         for r, c in zip(rows, cols):
             output[r, c] = pvo_np[r, c]
         
+        # update outputs
+        npp_loss = nansum(npp_np[rows, cols])
+        output_csv_data['S5_PVO'].append(total) # output.sum()
+        output_csv_data['S5_NPP_Loss'].append(npp_loss * 0.1)
+
         # report results
-        arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
-        arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
-        arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
-        arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {nansum(npp_np[rows, cols]):,.2f}")
+        if verbose:
+            arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
+            arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
+            arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
+            arcpy.AddMessage(f"  {'Loss of Agricultural Potential:':<32} {npp_loss:,.2f}")
 
         # write result to raster, load into workspace
         output_raster(path_join(output_raster_path, f"{iso3}_scenario5.tif"), 
                     output, lower_left, cell_width, cell_height, spatial_ref)
+
+    # output CSV File
+    DataFrame(output_csv_data).to_csv(output_csv_path)
 
     return
 
@@ -286,11 +339,23 @@ if __name__ == "__main__":
     km2_MW = float(arcpy.GetParameterAsText(3))
     density = float(arcpy.GetParameterAsText(4))
     output_raster_path = arcpy.GetParameterAsText(5)
-    target_file = arcpy.GetParameterAsText(6)
+    output_csv = arcpy.GetParameterAsText(6)
+    target_file = arcpy.GetParameterAsText(7)
 
-    # read in 
+    # validate raster directory
+    if not path.isdir(output_raster_path):
+        arcpy.AddError(f"Directory does not exist: {output_raster_path}")
+        exit()
+
+    # validate output file path
+    try:
+        output_csv = validate_csv_path(output_csv)
+    except FileNotFoundError as e:
+        arcpy.AddError ("Error:", e)
+
+    # read in targets file
     targets = read_csv(target_file)
 
     # run the tool
     run_tool(countries_shp, pvo_raster, npp_raster, km2_MW, 
-             density, output_raster_path, targets, debug=False)
+             density, output_raster_path, targets, output_csv, verbose=False)
