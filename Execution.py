@@ -178,22 +178,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
             arcpy.AddMessage(f"PVO Total = {pvo_total}")
             arcpy.AddMessage(f"PVO Min = {pvo_min}")
 
-        # sense check the target
-        if target > pvo_total:
-            arcpy.AddMessage(f"\nWARNING: The specified limit ({target:,.2f}) is greater than the sum of cell values ({pvo_total:,.2f}).")
-            arcpy.AddMessage(f"Nothing to do, skipping {iso3}...")
-            for n in range(1, 6):
-                output_csv_data[f'S{n}_PVO'].append(nan)
-                output_csv_data[f'S{n}_NPP_Loss'].append(nan)
-            continue
-        elif target < pvo_min:
-            arcpy.AddMessage(f"\nWARNING: The specified limit ({target:,.2f}) is smaller than the smallest cell value ({pvo_min:,.2f}).")
-            arcpy.AddMessage(f"Nothing to do, skipping {iso3}...")
-            for n in range(1, 6):
-                output_csv_data[f'S{n}_PVO'].append(nan)
-                output_csv_data[f'S{n}_NPP_Loss'].append(nan)
-            continue
-
         # update outputs 
         npp_loss = nansum(npp_np)
         output_csv_data['S1_PVO'].append(pvo_total)
@@ -210,6 +194,22 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         output_raster(path_join(output_raster_path, f"{iso3}_scenario1.tif"), 
                     pvo_np, lower_left, cell_width, cell_height, spatial_ref)
 
+
+        # sense check the target for whether to continue
+        if target > pvo_total:
+            arcpy.AddMessage(f"\nWARNING: The specified limit ({target:,.2f}) is greater than the sum of cell values ({pvo_total:,.2f}).")
+            arcpy.AddMessage(f"Nothing to do, skipping {iso3} Scenarios 2-5...")
+            for n in range(2, 6):
+                output_csv_data[f'S{n}_PVO'].append(nan)
+                output_csv_data[f'S{n}_NPP_Loss'].append(nan)
+            continue
+        elif target < pvo_min:
+            arcpy.AddMessage(f"\nWARNING: The specified limit ({target:,.2f}) is smaller than the smallest cell value ({pvo_min:,.2f}).")
+            arcpy.AddMessage(f"Nothing to do, skipping {iso3} Scenarios 2-5...")
+            for n in range(2, 6):
+                output_csv_data[f'S{n}_PVO'].append(nan)
+                output_csv_data[f'S{n}_NPP_Loss'].append(nan)
+            continue
 
         ''' SCENARIO 2 '''
 
