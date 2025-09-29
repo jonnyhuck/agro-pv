@@ -17,32 +17,26 @@ arcpy.CheckOutExtension("Spatial")
 
 
 def validate_csv_path(filepath):
-    """
-    Ensure filepath is a valid .csv file in an existing directory.
-    - If extension is not .csv, change it to .csv.
-    - If directory does not exist, raise FileNotFoundError.
-    """
-    
-    # Ensure it has .csv extension
+    """ Ensure filepath is a valid .csv file in an existing directory. """
+
+    # ensure file has .csv extension
     root, ext = path.splitext(filepath)
     if ext.lower() != ".csv":
         filepath = root + ".csv"
     
-    # Ensure directory exists
+    # ensure directory exists
     directory = path.dirname(filepath)
-    arcpy.AddMessage(directory)
     if not path.isdir(directory):
         raise FileNotFoundError(f"Directory does not exist: {directory}")
     
+    # return corrected / validated path
     return filepath
 
 
 def output_raster(output_raster_path, output, lower_left, cell_width, cell_height, 
                   spatial_ref, add_to_workspace=False):
-    '''
-    * Convert numpy array to raster, write to disk, load into environment
-    '''
-    
+    """ Convert numpy array to raster, write to disk, load into environment """
+
     # convert result back to raster, set projection
     output_raster = arcpy.NumPyArrayToRaster(output, lower_left, cell_width, cell_height, value_to_nodata=0)
     arcpy.DefineProjection_management(output_raster, spatial_ref)
@@ -58,7 +52,8 @@ def output_raster(output_raster_path, output, lower_left, cell_width, cell_heigh
 
 
 def select_indices(sorted_indices, values, target):
-    ''' Select values until sum is less than the limit '''  
+    ''' Select values until sum is less than the limit '''
+
     total = 0
     selected_indices = []
     for idx in sorted_indices:
@@ -128,15 +123,16 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         iso3 = row['ISO_3']
         target = float(row['Target'])
 
-        # load into CSV
-        output_csv_data['ISO3'].append(iso3)
-        output_csv_data['Target'].append(target)
-        
+        # get geometry (validate before loading anything into output)
         try:
             geom = multi_geoms[iso3]
         except KeyError:
             arcpy.AddMessage(f'WARNING: No geometry for {iso3}')
             continue
+
+        # load into CSV
+        output_csv_data['ISO3'].append(iso3)
+        output_csv_data['Target'].append(target)
 
         # for name, iso, geom in cursor:
         arcpy.AddMessage(f"\nProcessing {iso3} (target: {target:,})...")
@@ -171,7 +167,6 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
         # calculate PVO total
         pvo_total = nansum(pvo_np)
         pvo_min = nanmin(pvo_np)
-        output_csv_data
         if verbose:
             arcpy.AddMessage(f"PVO Total = {pvo_total}")
             arcpy.AddMessage(f"PVO Min = {pvo_min}")
@@ -326,6 +321,9 @@ def run_tool(countries, pvo_path, npp_path, km2_MW, density, output_raster_path,
                     output, lower_left, cell_width, cell_height, spatial_ref)
 
     # output CSV File
+    for col in output_csv_data.values(): 
+        arcpy.AddMessage(len(col))    
+    arcpy.AddMessage(output_csv_data)
     DataFrame(output_csv_data).to_csv(output_csv_path)
 
     return
