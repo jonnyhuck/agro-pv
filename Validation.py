@@ -17,7 +17,7 @@ class ToolValidator:
         # validation is performed.
 
         # If we are not outputting rasters, disable the output path parameter
-        self.params[9].enabled = self.params[8].value
+        '''self.params[9].enabled = self.params[8].value'''
         return
 
     def updateMessages(self):
