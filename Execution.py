@@ -148,255 +148,250 @@ def run_tool(countries, field_name, pvo_path, npp_path, km2_MW, density, grid_pr
             pvo_np = arcpy.RasterToNumPyArray(pvo_extract, nodata_to_value=nan) 
             npp_np = arcpy.RasterToNumPyArray(npp_extract, nodata_to_value=nan)
 
+            # convert units for PVO dataset
+            pvo_np = pvo_np * 365 / (100 * grid_proportion) * (10 / km2_MW) * density
+
+            # store data for this country
             raster_extracts[iso3] = (pvo_np, npp_np, lower_left, cell_width, cell_height)
 
 
     ''' run scenarios '''
 
-    try:
 
-        # list for countries for which the target has exceeded the capacity 
-        exceeded_countries = []
+    # list for countries for which the target has exceeded the capacity 
+    exceeded_countries = []
 
-        # loop through increments if required
-        arcpy.AddMessage(f"Running scenarios...")   # target to allow 1
-        for prop in arange(proportion, 1.00001, proportion) if increment else [proportion]:
-            # try:
+    # loop through increments if required
+    arcpy.AddMessage(f"Running scenarios...")   # target to allow 1
+    for prop in arange(proportion, 1.00001, proportion) if increment else [proportion]:
 
-            # init output CSV data dictionary
-            output_csv_data = defaultdict(list)
+        # init output CSV data dictionary
+        output_csv_data = defaultdict(list)
 
-            # loop through countries
-            for _, row in targets.iterrows():
-                # try:
+        # loop through countries
+        for _, row in targets.iterrows():
 
-                # get data for this country
-                iso3 = row['ISO_3']
+            # get data for this country
+            iso3 = row['ISO_3']
 
-                # get target for this country and load into CSV
-                target = float(row['Target'])
-                output_csv_data['ISO3'].append(iso3)
-                output_csv_data['Target'].append(target)
+            # get target for this country and load into CSV
+            target = float(row['Target'])
+            
+            # if we are in increment mode, then we need to update the target
+            if increment:
+                target *= prop
+            
+            output_csv_data['ISO3'].append(iso3)
+            output_csv_data['Target'].append(target)
 
-                # if this country has already discounted itself, skip
-                if len(exceeded_countries) > 0:
-                    if iso3 in [c['ISO_3'] for c in exceeded_countries]:
-                        arcpy.AddMessage(f"Nothing to do, skipping {iso3} Scenarios 2-5...")
-                        for n in range(1, 6):
-                            output_csv_data[f'S{n}_PVO'].append(nan)
-                            output_csv_data[f'S{n}_Area_Used'].append(nan)
-                        continue
-
-                # and only continue if valid
-                if target <= 0:
-                    arcpy.AddMessage(f"\nSkipping {iso3} (invalid target: {target:})...")
+            # if this country has already discounted itself, skip
+            if len(exceeded_countries) > 0:
+                if iso3 in [c['ISO_3'] for c in exceeded_countries]:
+                    arcpy.AddMessage(f"Nothing to do, skipping {iso3} Scenarios 2-5...")
                     for n in range(1, 6):
                         output_csv_data[f'S{n}_PVO'].append(nan)
                         output_csv_data[f'S{n}_Area_Used'].append(nan)
                     continue
 
-                # for name, iso, geom in cursor:
-                arcpy.AddMessage(f"\nProcessing {iso3} (target: {target:,}, proportion: {prop})...")
+            # and only continue if valid
+            if target <= 0:
+                arcpy.AddMessage(f"\nSkipping {iso3} (invalid target: {target:})...")
+                for n in range(1, 6):
+                    output_csv_data[f'S{n}_PVO'].append(nan)
+                    output_csv_data[f'S{n}_Area_Used'].append(nan)
+                continue
 
-                # get raster data and properties for this country
-                pvo_np, npp_np, lower_left, cell_width, cell_height = raster_extracts[iso3]
+            # for name, iso, geom in cursor:
+            arcpy.AddMessage(f"\nProcessing {iso3} (target: {target:,}, proportion: {prop})...")
+
+            # get raster data and properties for this country
+            pvo_np, npp_np, lower_left, cell_width, cell_height = raster_extracts[iso3]
+
+            # flatten arrays for scenarios
+            pvo_flat = pvo_np.flatten()
+            npp_flat = npp_np.flatten()
+
+            # this is overall quality on a scale of 0-1
+            both_flat = ((pvo_flat / nanmax(pvo_flat)) + (1 - npp_flat / nanmax(npp_flat))) / 2
+
+            ''' SCENARIO 1 '''
+
+            # calculate PVO total
+            pvo_total = nansum(pvo_np)
+            pvo_min = nanmin(pvo_np)
+            area_used = count_nonzero(~isnan(pvo_np)) * cell_area * grid_proportion
+            if verbose:
+                arcpy.AddMessage(f"PVO Total = {pvo_total}")
+                arcpy.AddMessage(f"PVO Min = {pvo_min}")
+
+            # update outputs 
+            output_csv_data['S1_PVO'].append(pvo_total)
+            output_csv_data['S1_Area_Used'].append(area_used)
+
+            # report results
+            if verbose:
+                arcpy.AddMessage(f"\n Scenario 1: Theoretical Maximum Potential...")
+                arcpy.AddMessage(f"  {'Cell Count:':<32} {npp_flat[~isnan(npp_flat)].size:,.2f}")
+                arcpy.AddMessage(f"  {'PVO Sum:':<32} {pvo_total:,.2f}")
+                arcpy.AddMessage(f"  {'Area Used:':<32} {area_used:,.2f}")
+
+            # write result to raster, load into workspace
+            if output_rasters:
+                output_raster(path_join(output_path, f"{iso3}_scenario1_{prop}.tif"), 
+                            pvo_np, lower_left, cell_width, cell_height, spatial_ref)
+
+
+            # is target too big?
+            if target > pvo_total:
+                arcpy.AddMessage(f"\nWARNING: The specified target ({target:,.2f}) is greater than the sum of cell values ({pvo_total:,.2f}).")
+                arcpy.AddMessage(f"Nothing to do, skipping {iso3} Scenarios 2-5...")
                 
-                # convert units for PVO dataset
-                pvo_np = pvo_np * 365 / (100 * prop) * (10 / km2_MW) * density
-
-                # flatten arrays for scenarios
-                pvo_flat = pvo_np.flatten()
-                npp_flat = npp_np.flatten()
-
-                # this is overall quality on a scale of 0-1
-                both_flat = ((pvo_flat / nanmax(pvo_flat)) + (1 - npp_flat / nanmax(npp_flat))) / 2
-
-                ''' SCENARIO 1 '''
-
-                # calculate PVO total
-                pvo_total = nansum(pvo_np)
-                pvo_min = nanmin(pvo_np)
-                area_used = count_nonzero(~isnan(pvo_np)) * cell_area * grid_proportion
-                if verbose:
-                    arcpy.AddMessage(f"PVO Total = {pvo_total}")
-                    arcpy.AddMessage(f"PVO Min = {pvo_min}")
-
-                # update outputs 
-                output_csv_data['S1_PVO'].append(pvo_total)
-                output_csv_data['S1_Area_Used'].append(area_used)
-
-                # report results
-                if verbose:
-                    arcpy.AddMessage(f"\n Scenario 1: Theoretical Maximum Potential...")
-                    arcpy.AddMessage(f"  {'Cell Count:':<32} {npp_flat[~isnan(npp_flat)].size:,.2f}")
-                    arcpy.AddMessage(f"  {'PVO Sum:':<32} {pvo_total:,.2f}")
-                    arcpy.AddMessage(f"  {'Area Used:':<32} {area_used:,.2f}")
-
-                # write result to raster, load into workspace
-                if output_rasters:
-                    output_raster(path_join(output_path, f"{iso3}_scenario1_{prop}.tif"), 
-                                pvo_np, lower_left, cell_width, cell_height, spatial_ref)
-
-
-                # is target too big?
-                if target > pvo_total:
-                    arcpy.AddMessage(f"\nWARNING: The specified target ({target:,.2f}) is greater than the sum of cell values ({pvo_total:,.2f}).")
-                    arcpy.AddMessage(f"Nothing to do, skipping {iso3} Scenarios 2-5...")
-                    
-                    # record the increment at which it was first excluded
-                    exceeded_countries.append({'ISO_3':iso3, 'increment':prop})
-                    
-                    # populate data with nans
-                    for n in range(2, 6):
-                        output_csv_data[f'S{n}_PVO'].append(nan)
-                        output_csv_data[f'S{n}_Area_Used'].append(nan)
-                    continue
+                # record the increment at which it was first excluded
+                exceeded_countries.append({'ISO_3':iso3, 'increment':prop})
                 
-                # is target too small?
-                elif target < pvo_min:
-                    arcpy.AddMessage(f"\nWARNING: The specified target ({target:,.2f}) is smaller than the smallest cell value ({pvo_min:,.2f}).")
-                    arcpy.AddMessage(f"Nothing to do, skipping {iso3} Scenarios 2-5...")
-                    
-                    # populate data with nans
-                    for n in range(2, 6):
-                        output_csv_data[f'S{n}_PVO'].append(nan)
-                        output_csv_data[f'S{n}_Area_Used'].append(nan)
-                    continue
-
-
-                ''' SCENARIO 2 '''
-
-                # flatten and sort array and select top N cells
-                selected_indices, total = select_indices(argsort(pvo_flat)[::-1], pvo_flat, target)
-                area_used = len(selected_indices) * cell_area * grid_proportion
+                # populate data with nans
+                for n in range(2, 6):
+                    output_csv_data[f'S{n}_PVO'].append(nan)
+                    output_csv_data[f'S{n}_Area_Used'].append(nan)
+                continue
+            
+            # is target too small?
+            elif target < pvo_min:
+                arcpy.AddMessage(f"\nWARNING: The specified target ({target:,.2f}) is smaller than the smallest cell value ({pvo_min:,.2f}).")
+                arcpy.AddMessage(f"Nothing to do, skipping {iso3} Scenarios 2-5...")
                 
-                # convert back to 2D indices and construct output surface
-                rows, cols = unravel_index(selected_indices, pvo_np.shape)
-                output = zeros_like(pvo_np)
-                for r, c in zip(rows, cols):
-                    output[r, c] = pvo_np[r, c]
-
-                # update outputs
-                output_csv_data['S2_PVO'].append(total)
-                output_csv_data['S2_Area_Used'].append(area_used)
-
-                # report results
-                if verbose:
-                    arcpy.AddMessage(f"\n Scenario 2: Prioritise Energy Production...")
-                    arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
-                    arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {total:,.2f}")
-                    arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
-                    arcpy.AddMessage(f"  {'Area Used:':<32} {area_used:,.2f}")
-
-                # write result to raster, load into workspace
-                if output_rasters:
-                    output_raster(path_join(output_path, f"{iso3}_scenario2_{prop}.tif"), 
-                            output, lower_left, cell_width, cell_height, spatial_ref)
-
-                
-                ''' SCENARIO 3 '''
-
-                # flatten and sort array and select top N cells
-                selected_indices, total = select_indices(argsort(npp_flat), pvo_flat, target)
-                area_used = len(selected_indices) * cell_area * grid_proportion
-
-                # convert back to 2D indices and construct output surface
-                rows, cols = unravel_index(selected_indices, pvo_np.shape)
-                output = zeros_like(pvo_np)
-                for r, c in zip(rows, cols):
-                    output[r, c] = pvo_np[r, c]
-
-                # update outputs
-                output_csv_data['S3_PVO'].append(total)
-                output_csv_data['S3_Area_Used'].append(area_used)
-                
-                # report results
-                if verbose:
-                    arcpy.AddMessage(f"\n Scenario 3: Prioritise Agricultural Production...")
-                    arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
-                    arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {total:,.2f}")
-                    arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
-                    arcpy.AddMessage(f"  {'Area Used:':<32} {area_used:,.2f}")
-
-                # write result to raster, load into workspace
-                if output_rasters:
-                    output_raster(path_join(output_path, f"{iso3}_scenario3_{prop}.tif"), 
-                            output, lower_left, cell_width, cell_height, spatial_ref)
+                # populate data with nans
+                for n in range(2, 6):
+                    output_csv_data[f'S{n}_PVO'].append(nan)
+                    output_csv_data[f'S{n}_Area_Used'].append(nan)
+                continue
 
 
-                ''' SCENARIO 4 '''
+            ''' SCENARIO 2 '''
 
-                # flatten and sort array and select top N cells
-                selected_indices, total = select_indices(argsort(both_flat)[::-1], pvo_flat, target)
-                area_used = len(selected_indices) * cell_area * grid_proportion
+            # flatten and sort array and select top N cells
+            selected_indices, total = select_indices(argsort(pvo_flat)[::-1], pvo_flat, target)
+            area_used = len(selected_indices) * cell_area * grid_proportion
+            
+            # convert back to 2D indices and construct output surface
+            rows, cols = unravel_index(selected_indices, pvo_np.shape)
+            output = zeros_like(pvo_np)
+            for r, c in zip(rows, cols):
+                output[r, c] = pvo_np[r, c]
 
-                # convert back to 2D indices and construct output surface
-                rows, cols = unravel_index(selected_indices, pvo_np.shape)
-                output = zeros_like(pvo_np)
-                for r, c in zip(rows, cols):
-                    output[r, c] = pvo_np[r, c]
-                
-                # update outputs
-                output_csv_data['S4_PVO'].append(total)
-                output_csv_data['S4_Area_Used'].append(area_used)
+            # update outputs
+            output_csv_data['S2_PVO'].append(total)
+            output_csv_data['S2_Area_Used'].append(area_used)
 
-                # report results
-                if verbose:
-                    arcpy.AddMessage(f"\n Scenario 4: Balance Energy and Agricultural Production...")
-                    arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
-                    arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
-                    arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
-                    arcpy.AddMessage(f"  {'area Used:':<32} {area_used:,.2f}")
+            # report results
+            if verbose:
+                arcpy.AddMessage(f"\n Scenario 2: Prioritise Energy Production...")
+                arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
+                arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {total:,.2f}")
+                arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
+                arcpy.AddMessage(f"  {'Area Used:':<32} {area_used:,.2f}")
 
-                # write result to raster, load into workspace
-                if output_rasters:
-                    output_raster(path_join(output_path, f"{iso3}_scenario4_{prop}.tif"), 
-                            output, lower_left, cell_width, cell_height, spatial_ref)
+            # write result to raster, load into workspace
+            if output_rasters:
+                output_raster(path_join(output_path, f"{iso3}_scenario2_{prop}.tif"), 
+                        output, lower_left, cell_width, cell_height, spatial_ref)
 
-                
-                ''' SCENARIO 5 '''
+            
+            ''' SCENARIO 3 '''
 
-                # flatten and sort array and select top N cells
-                selected_indices, total = select_indices(permutation(len(pvo_flat)), pvo_flat, target)
-                area_used = len(selected_indices) * cell_area * grid_proportion
+            # flatten and sort array and select top N cells
+            selected_indices, total = select_indices(argsort(npp_flat), pvo_flat, target)
+            area_used = len(selected_indices) * cell_area * grid_proportion
 
-                # convert back to 2D indices and construct output surface
-                rows, cols = unravel_index(selected_indices, pvo_np.shape)
-                output = zeros_like(pvo_np)
-                for r, c in zip(rows, cols):
-                    output[r, c] = pvo_np[r, c]
-                
-                # update outputs
-                output_csv_data['S5_PVO'].append(total)
-                output_csv_data['S5_Area_Used'].append(area_used)
+            # convert back to 2D indices and construct output surface
+            rows, cols = unravel_index(selected_indices, pvo_np.shape)
+            output = zeros_like(pvo_np)
+            for r, c in zip(rows, cols):
+                output[r, c] = pvo_np[r, c]
 
-                # report results
-                if verbose:
-                    arcpy.AddMessage(f"\n Scenario 5: Randomised Locations...")
-                    arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
-                    arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
-                    arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
-                    arcpy.AddMessage(f"  {'Area Used:':<32} {area_used:,.2f}")
+            # update outputs
+            output_csv_data['S3_PVO'].append(total)
+            output_csv_data['S3_Area_Used'].append(area_used)
+            
+            # report results
+            if verbose:
+                arcpy.AddMessage(f"\n Scenario 3: Prioritise Agricultural Production...")
+                arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
+                arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {total:,.2f}")
+                arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
+                arcpy.AddMessage(f"  {'Area Used:':<32} {area_used:,.2f}")
 
-                # write result to raster, load into workspace
-                if output_rasters:
-                    output_raster(path_join(output_path, f"{iso3}_scenario5_{prop}.tif"), 
-                            output, lower_left, cell_width, cell_height, spatial_ref)
-        
-                # except Exception as e:
-                #     arcpy.AddMessage(f"\n Error on {iso3}:\n {e}")
-                #     continue
+            # write result to raster, load into workspace
+            if output_rasters:
+                output_raster(path_join(output_path, f"{iso3}_scenario3_{prop}.tif"), 
+                        output, lower_left, cell_width, cell_height, spatial_ref)
 
-            # output the CSV for this proportion
-            # finally:    # this means we don't lose the data if an error does appear
-            DataFrame(output_csv_data).to_csv(path_join(output_path, f"{prop}.csv"))
 
-    # report 
-    finally:    # this means we don't lose the data if an error does appear
-        
-        # if in increment mode, also export a _exceeded dataset
-        if increment:
-            DataFrame(exceeded_countries).to_csv(path_join(output_path, f"exceeded_targets.csv"))
+            ''' SCENARIO 4 '''
+
+            # flatten and sort array and select top N cells
+            selected_indices, total = select_indices(argsort(both_flat)[::-1], pvo_flat, target)
+            area_used = len(selected_indices) * cell_area * grid_proportion
+
+            # convert back to 2D indices and construct output surface
+            rows, cols = unravel_index(selected_indices, pvo_np.shape)
+            output = zeros_like(pvo_np)
+            for r, c in zip(rows, cols):
+                output[r, c] = pvo_np[r, c]
+            
+            # update outputs
+            output_csv_data['S4_PVO'].append(total)
+            output_csv_data['S4_Area_Used'].append(area_used)
+
+            # report results
+            if verbose:
+                arcpy.AddMessage(f"\n Scenario 4: Balance Energy and Agricultural Production...")
+                arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
+                arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
+                arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
+                arcpy.AddMessage(f"  {'area Used:':<32} {area_used:,.2f}")
+
+            # write result to raster, load into workspace
+            if output_rasters:
+                output_raster(path_join(output_path, f"{iso3}_scenario4_{prop}.tif"), 
+                        output, lower_left, cell_width, cell_height, spatial_ref)
+
+            
+            ''' SCENARIO 5 '''
+
+            # flatten and sort array and select top N cells
+            selected_indices, total = select_indices(permutation(len(pvo_flat)), pvo_flat, target)
+            area_used = len(selected_indices) * cell_area * grid_proportion
+
+            # convert back to 2D indices and construct output surface
+            rows, cols = unravel_index(selected_indices, pvo_np.shape)
+            output = zeros_like(pvo_np)
+            for r, c in zip(rows, cols):
+                output[r, c] = pvo_np[r, c]
+            
+            # update outputs
+            output_csv_data['S5_PVO'].append(total)
+            output_csv_data['S5_Area_Used'].append(area_used)
+
+            # report results
+            if verbose:
+                arcpy.AddMessage(f"\n Scenario 5: Randomised Locations...")
+                arcpy.AddMessage(f"  {'Cell Count:':<32} {len(selected_indices)}")
+                arcpy.AddMessage(f"  {'Sum of Cell Values:':<32} {output.sum():,.2f}")
+                arcpy.AddMessage(f"  {'Difference from target:':<32} {target - total:,.2f} ({(target - total) / target:.4f}%)")
+                arcpy.AddMessage(f"  {'Area Used:':<32} {area_used:,.2f}")
+
+            # write result to raster, load into workspace
+            if output_rasters:
+                output_raster(path_join(output_path, f"{iso3}_scenario5_{prop}.tif"), 
+                        output, lower_left, cell_width, cell_height, spatial_ref)
+
+        # output the CSV for this proportion
+        DataFrame(output_csv_data).to_csv(path_join(output_path, f"{prop}.csv"))
+    
+    # if in increment mode, also export a _exceeded dataset
+    if increment:
+        DataFrame(exceeded_countries).to_csv(path_join(output_path, f"exceeded_targets.csv"))
 
     return
 
