@@ -179,6 +179,7 @@ def run_tool(countries, field_name, pvo_path, npp_path, km2_MW, density, grid_pr
             
             # if we are in increment mode, then we need to update the target
             if increment:
+                full_target = target
                 target *= prop
             
             output_csv_data['ISO3'].append(iso3)
@@ -246,8 +247,16 @@ def run_tool(countries, field_name, pvo_path, npp_path, km2_MW, density, grid_pr
                 arcpy.AddMessage(f"\nWARNING: The specified target ({target:,.2f}) is greater than the sum of cell values ({pvo_total:,.2f}).")
                 arcpy.AddMessage(f"Nothing to do, skipping {iso3} Scenarios 2-5...")
                 
-                # record the increment at which it was first excluded
-                exceeded_countries.append({'ISO_3':iso3, 'increment':prop})
+                # record the last increment at which it was not excluded
+                if increment:   # just leave it empty if not in increment mode
+                    exceeded_countries.append({'ISO_3': iso3,
+                                               'succeeded_at': max(prop - proportion, 0.0),
+                                               'exceeded_at': prop,
+                                               'increment':  proportion,
+                                               'target':  target,
+                                               'full_target':  full_target,
+                                               'PVO total':  pvo_total,
+                                               'balance': (pvo_total - full_target) / full_target})
                 
                 # populate data with nans
                 for n in range(2, 6):
@@ -391,6 +400,25 @@ def run_tool(countries, field_name, pvo_path, npp_path, km2_MW, density, grid_pr
     
     # if in increment mode, also export a _exceeded dataset
     if increment:
+
+        # loop back through all of the countries
+        for _, row in targets.iterrows():
+            iso3 = row['ISO_3']
+            
+            # add any missing countries in with "1" to show that they met the target
+            if iso3  not in [c['ISO_3'] for c in exceeded_countries]:
+                target = row['Target']
+                pvo_total = nansum(raster_extracts[iso3][0])
+                exceeded_countries.append({ 'ISO_3': iso3,
+                                            'succeeded_at': 1.0,
+                                            'exceeded_at': nan,
+                                            'increment':  proportion,
+                                            'target':  target,
+                                            'full_target':  target,
+                                            'PVO total':  pvo_total,
+                                            'balance': (pvo_total - target) / target if target > 0 else nan})
+            
+        # write the result to CSV file
         DataFrame(exceeded_countries).to_csv(path_join(output_path, f"exceeded_targets.csv"))
 
     return
